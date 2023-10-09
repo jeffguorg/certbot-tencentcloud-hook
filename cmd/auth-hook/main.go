@@ -120,19 +120,24 @@ func main() {
 	needCreating := true
 	for _, record := range recordListResponse.Response.RecordList {
 		if *record.Type == "TXT" && *record.Name == acmeRecordName {
-			recordUpdateRequest := dnspod.NewModifyRecordRequest()
-			recordUpdateRequest.Domain = &rootDomain
-			recordUpdateRequest.RecordId = record.RecordId
-			recordUpdateRequest.Value = &acmeChallegeValue
-			recordUpdateRequest.RecordLine = &recordLine
-			recordUpdateRequest.RecordType = &recordType
-			response, err := client.ModifyRecord(recordUpdateRequest)
-			if err != nil {
-				panic(err)
-			}
 			needCreating = false
 
-			log.Println("record updated, request id: ", response.Response.RequestId)
+			if *record.Value != acmeChallegeValue {
+				recordUpdateRequest := dnspod.NewModifyRecordRequest()
+				recordUpdateRequest.Domain = &rootDomain
+				recordUpdateRequest.RecordId = record.RecordId
+				recordUpdateRequest.Value = &acmeChallegeValue
+				recordUpdateRequest.RecordLine = &recordLine
+				recordUpdateRequest.RecordType = &recordType
+				response, err := client.ModifyRecord(recordUpdateRequest)
+				if err != nil {
+					panic(err)
+				}
+
+				log.Println("record updated, request id: ", response.Response.RequestId)
+			} else {
+				log.Println("record untouched for value is identical")
+			}
 			break
 		}
 	}
