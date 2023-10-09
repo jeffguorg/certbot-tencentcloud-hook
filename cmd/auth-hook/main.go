@@ -6,8 +6,12 @@ import (
 	"net"
 	"os"
 	"strings"
+	"text/template"
 	"time"
 
+	_ "embed"
+
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
@@ -15,11 +19,32 @@ import (
 	dnspod "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/dnspod/v20210323"
 )
 
+var (
+	//go:embed wrapper.sh
+	templateContent string
+
+	templateWrapper = template.Must(template.New("").Parse(templateContent))
+)
+
 func main() {
-	viper.SetDefault("RecordType", "TXT")
-	viper.SetDefault("RecordLine", "默认")
-	viper.SetDefault("ResolutionTimeout", time.Second*600)
-	viper.SetDefault("ExtraWait", time.Second*100)
+	pflag.String("record-type", "TXT", "")
+	pflag.String("record-line", "默认", "")
+	pflag.Duration("timeout", time.Second*600, "resolution timeout")
+	pflag.Duration("extra-wait", time.Second*100, "sometimes dns relays contains old value. wait for a period of time")
+
+	pflag.String("secret-id", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "")
+	pflag.String("secret-key", "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY", "")
+	pflag.String("root-domain", "example.com", "")
+
+	pflag.Bool("debug", false, "")
+	pflag.Bool("wrap-self", false, "print script to wrap it self")
+	pflag.Parse()
+
+	pflag.VisitAll(func(f *pflag.Flag) {
+		viper.BindEnv(strings.ReplaceAll(f.Name, "-", "_"))
+	})
+
+	viper.BindPFlags(pflag.CommandLine)
 
 	viper.SetConfigName("authhook")
 	viper.AddConfigPath(".")
@@ -29,25 +54,47 @@ func main() {
 	}
 
 	viper.SetEnvPrefix("AUTHHOOK")
+	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	viper.AutomaticEnv()
 	if err := viper.ReadInConfig(); err != nil {
-		panic(err)
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			panic(err)
+		}
 	}
 
-	recordResolutionTimeout := viper.GetDuration("ResolutionTimeout")
-	extraWait := viper.GetDuration("ExtraWait")
-	recordType := viper.GetString("RecordType")
-	recordLine := viper.GetString("RecordLine")
+	recordResolutionTimeout := viper.GetDuration("timeout")
+	extraWait := viper.GetDuration("extra-wait")
+	recordType := viper.GetString("record-type")
+	recordLine := viper.GetString("record-line")
 
-	secretId := viper.GetString("SecretID")
-	secretKey := viper.GetString("SecretKey")
+	secretId := viper.GetString("secret-id")
+	secretKey := viper.GetString("secret-key")
+	rootDomain := viper.GetString("root-domain")
 
-	rootDomain := viper.GetString("RootDomain")
+	if debug := viper.GetBool("debug"); debug {
+		viper.DebugTo(os.Stderr)
+	}
+
+	if wrapSelf := viper.GetBool("wrap-self"); wrapSelf {
+		templateWrapper.Execute(os.Stdout, map[string]any{
+			"self": os.Args[0],
+
+			"timeout":    recordResolutionTimeout,
+			"extraWait":  extraWait,
+			"recordType": recordType,
+			"recordLine": recordLine,
+
+			"secretId":   secretId,
+			"secretKey":  secretKey,
+			"rootDomain": rootDomain,
+		})
+		return
+	}
+
 	certbotDomain := os.Getenv("CERTBOT_DOMAIN")
+	acmeChallegeValue := os.Getenv("CERTBOT_VALIDATION")
 	acmeChangeDomain := "_acme-challenge." + certbotDomain
 	acmeRecordName := strings.ReplaceAll(acmeChangeDomain, "."+rootDomain, "")
-
-	acmeChallegeValue := os.Getenv("CERTBOT_VALIDATION")
 
 	log.Println("root domain: ", rootDomain)
 	log.Println("certbot domain: ", certbotDomain)
